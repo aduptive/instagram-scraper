@@ -128,3 +128,25 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+// .gitignore
+dist/
+node_modules/
+coverage/
+*.log
+.DS_Store
+.env
+.env.local
+.env.*.local
+
+// .npmignore
+src/
+tests/
+coverage/
+.github/
+.prettierrc
+.eslintrc.js
+jest.config.js
+tsconfig.json
+*.test.ts
+*.spec.ts
