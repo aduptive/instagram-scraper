@@ -10,6 +10,7 @@
     "README.md"
   ],
   "scripts": {
+    "debug": "ts-node debug.ts",
     "build": "tsc",
     "clean": "rimraf dist",
     "test": "jest",

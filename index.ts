@@ -1,24 +1,8 @@
-import { ScrapeError } from './src';
-import { InstagramScraper } from './src/scraper';
+#!/usr/bin/env node
+import { InstagramScraper } from './src';
 
-const scraper = new InstagramScraper({
-  minDelay: 2000,
-  maxDelay: 5000,
-});
+export { InstagramScraper } from './src';
+export { ScrapeError } from './src/errors';
+export * from './src/types';
 
-async function main() {
-  try {
-    const result = await scraper.getPosts('username', 20);
-    if (result.success) {
-      console.log(`Collected ${result.posts?.length} posts`);
-    } else {
-      console.error('Error:', result.error);
-    }
-  } catch (error) {
-    if (error instanceof ScrapeError) {
-      console.error('Scraping error:', error.message, error.code);
-    } else {
-      console.error('Unknown error:', error);
-    }
-  }
-}
+export default InstagramScraper;
