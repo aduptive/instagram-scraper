@@ -150,3 +150,4 @@ jest.config.js
 tsconfig.json
 *.test.ts
 *.spec.ts
+package-lock.json
