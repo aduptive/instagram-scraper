@@ -140,14 +140,6 @@ coverage/
 .env.*.local
 
 // .npmignore
-src/
-tests/
 coverage/
 .github/
-.prettierrc
-.eslintrc.js
-jest.config.js
-tsconfig.json
-*.test.ts
-*.spec.ts
 package-lock.json

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { InstagramScraper } from './src';
+import { InstagramScraper } from './scraper';
 
 async function debugScraper(): Promise<void> {
   try {
@@ -10,7 +10,7 @@ async function debugScraper(): Promise<void> {
       maxDelay: 0,
     });
 
-    // Make direct request to see Instagram response
+    // Direct request to check Instagram's response
     const response = await axios.get('https://www.instagram.com/instagram/', {
       headers: {
         'User-Agent':
@@ -58,7 +58,7 @@ async function debugScraper(): Promise<void> {
       console.log('No scripts found');
     }
 
-    // Look for other possible data sources
+    // Search for other possible data sources
     console.log('\n=== Looking for other data sources ===');
     const alternativePatterns = [
       'window.__additionalDataLoaded',
@@ -83,6 +83,20 @@ async function debugScraper(): Promise<void> {
     // Try normal scraper request
     console.log('\n=== Trying normal scraper ===');
     const result = await scraper.getPosts('instagram');
+
+    // Save results to files
+    if (result.success) {
+      await scraper.saveToJson(result, 'test_output.json');
+      await scraper.saveToJson(
+        {
+          success: true,
+          processed_posts: result.processed_posts,
+        },
+        'test.json'
+      );
+      console.log('JSON files generated successfully!');
+    }
+
     console.log('Result:', JSON.stringify(result, null, 2));
   } catch (error) {
     console.error('\n=== Error during test ===');
