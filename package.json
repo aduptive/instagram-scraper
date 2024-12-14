@@ -1,6 +1,6 @@
 {
   "name": "@aduptive/instagram-scraper",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Modern TypeScript library for collecting public Instagram content with smart delays, mobile-first approach, and media support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,8 @@
     "prepublishOnly": "npm test && npm run lint",
     "preversion": "npm run lint",
     "version": "npm run format && git add -A src",
-    "postversion": "git push && git push --tags"
+    "postversion": "git push && git push --tags",
+    "format": "prettier --write \"src/**/*.ts\""
   },
   "keywords": [
     "instagram",
