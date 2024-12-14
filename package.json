@@ -1,6 +1,6 @@
 {
   "name": "@aduptive/instagram-scraper",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Modern TypeScript library for collecting public Instagram content with smart delays, mobile-first approach, and media support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
