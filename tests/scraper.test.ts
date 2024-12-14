@@ -119,7 +119,7 @@ describe('InstagramScraper', () => {
   it('should save to JSON', async () => {
     const mockData = {
       success: true,
-      username: 'test',
+      username: 'instagram',
       posts: [],
       scraped_at: new Date().toISOString(),
     };
