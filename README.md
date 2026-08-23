@@ -1,18 +1,8 @@
-# Instagram Scraper
+# instagram-scraper
 
-A lightweight TypeScript library for scraping public Instagram profiles without authentication. This tool allows you to fetch recent posts from any public Instagram profile while respecting rate limits and implementing best practices for web scraping.
+Fetch recent posts from public Instagram profiles, no login required. TypeScript, a single dependency (axios), built-in delays and rate limiting so you don't get your IP blocked in the first minute.
 
-## Features
-
-- 🚫 No authentication required
-- 📱 Mobile-first approach for better reliability
-- 🔄 Random delays and mobile user agents rotation
-- ⚡ Lightweight and easy to use
-- 📦 Written in TypeScript with full type support
-- 🛡️ Built-in rate limiting and error handling
-- 💾 JSON export functionality
-
-## Installation
+## Install
 
 ```bash
 npm install @aduptive/instagram-scraper
@@ -20,148 +10,77 @@ npm install @aduptive/instagram-scraper
 
 ## Usage
 
-### Basic Usage
-
 ```typescript
 import { InstagramScraper } from '@aduptive/instagram-scraper';
 
-async function main() {
-  const scraper = new InstagramScraper();
-  
-  try {
-    // Get the last 20 posts from a public profile
-    const results = await scraper.getPosts('instagram', 20);
-    
-    if (results.success && results.posts) {
-      console.log(`Successfully collected ${results.posts.length} posts`);
-      // Save to JSON file
-      await scraper.saveToJson(results);
-    } else {
-      console.error('Error:', results.error);
-    }
-  } catch (error) {
-    console.error('Critical error:', error);
-  }
-}
+const scraper = new InstagramScraper();
+const results = await scraper.getPosts('instagram', 12);
 
-main();
+if (results.success && results.posts) {
+  console.log(`got ${results.posts.length} posts`);
+  await scraper.saveToJson(results, 'posts.json');
+} else {
+  console.error(results.error);
+}
 ```
 
-### With Configuration
+Each post comes with id, shortcode, caption, like/comment counts, timestamp, post URL and the media items (images, videos and carousel children, with dimensions).
+
+## Config
+
+All optional:
 
 ```typescript
 const scraper = new InstagramScraper({
-  maxRetries: 3,
-  minDelay: 2000,
-  maxDelay: 5000,
-  timeout: 10000,
-  rateLimitPerMinute: 20
+  maxRetries: 3,           // retries for network/timeout/5xx errors
+  minDelay: 1000,          // random pause between requests, in ms
+  maxDelay: 3000,
+  timeout: 10000,          // per-request timeout in ms
+  rateLimitPerMinute: 30,  // hard cap on requests per minute
 });
 ```
 
-### Multiple Profiles
+Notes on how these behave:
+
+- Retries only happen for transient errors (network, timeout, Instagram 5xx). A 429, 404 or 403 fails immediately, since retrying those just digs the hole deeper.
+- The rate limit is a sliding one-minute window over every request the scraper makes (profile + media), on top of the random min/max delay.
+
+## Error handling
+
+`getPosts` doesn't throw for scraping failures. Check `results.success`:
 
 ```typescript
-async function scrapeMultipleProfiles(usernames: string[]) {
-  const scraper = new InstagramScraper();
-  
-  for (const username of usernames) {
-    try {
-      // Random delay between requests (2-5 seconds)
-      await new Promise(resolve => 
-        setTimeout(resolve, 2000 + Math.random() * 3000)
-      );
-      
-      const results = await scraper.getPosts(username, 20);
-      if (results.success) {
-        console.log(`${username}: ${results.posts?.length} posts collected`);
-      } else {
-        console.log(`${username}: ${results.error}`);
-      }
-    } catch (error) {
-      console.error(`Error collecting ${username}:`, error);
-    }
-  }
+const results = await scraper.getPosts('someuser');
+if (!results.success) {
+  // results.error is a message, results.code is one of:
+  // RATE_LIMITED, PROFILE_NOT_FOUND, ACCESS_DENIED, TIMEOUT,
+  // NETWORK_ERROR, SERVER_ERROR
+  console.error(results.code, results.error);
 }
 ```
 
-### Error Handling
+## Limitations
+
+- Public profiles only.
+- Without login Instagram only serves the ~12 most recent posts of a profile, so a higher `limit` won't get you more than that.
+- This relies on Instagram's web API, which they can change whenever they feel like it. If something breaks, [open an issue](https://github.com/aduptive/instagram-scraper/issues).
+
+## Scraping multiple profiles
+
+Do it sequentially, and give it some breathing room between accounts. A shared scraper instance keeps the rate-limit window across profiles:
 
 ```typescript
-import { InstagramScraper, ScrapeError } from '@aduptive/instagram-scraper';
+const scraper = new InstagramScraper();
 
-try {
-  const results = await scraper.getPosts('username');
-  if (!results.success) {
-    console.error('Failed:', results.error);
-    return;
-  }
-  // Handle success...
-} catch (error) {
-  if (error instanceof ScrapeError) {
-    console.error(`Scraping error: ${error.message} (${error.code})`);
-  } else {
-    console.error('Unknown error:', error);
-  }
+for (const username of ['nasa', 'natgeo']) {
+  const results = await scraper.getPosts(username, 12);
+  console.log(username, results.success ? results.posts?.length : results.error);
+  await new Promise((r) => setTimeout(r, 60_000));
 }
 ```
 
-## Configuration Options
-
-```typescript
-interface ScraperConfig {
-  maxRetries?: number;      // Maximum number of retry attempts (default: 3)
-  minDelay?: number;        // Minimum delay between requests in ms (default: 1000)
-  maxDelay?: number;        // Maximum delay between requests in ms (default: 3000)
-  timeout?: number;         // Request timeout in ms (default: 10000)
-  rateLimitPerMinute?: number; // Maximum requests per minute (default: 30)
-}
-```
-
-### Retries
-
-Failed requests are retried up to `maxRetries` times (with a random delay between
-attempts) for transient errors only: network errors, timeouts, and Instagram 5xx
-responses. Errors like `429 Too Many Requests`, `404 Not Found`, and
-`403 Forbidden` are **not** retried — retrying those would only make rate
-limiting worse.
-
-### Rate limiting
-
-The scraper keeps a sliding one-minute window of all outgoing requests (profile
-and media requests alike). When `rateLimitPerMinute` is reached, the next request
-waits until the window frees up. This is in addition to the random
-`minDelay`/`maxDelay` pause between requests.
-
-## Best Practices
-
-1. **Rate Limiting**: The tool implements built-in delays, but you should still be mindful of Instagram's rate limits
-2. **Error Handling**: Always implement proper error handling as shown in the examples
-3. **Delays**: Use appropriate delays between requests to avoid being blocked
-4. **User Agents**: The tool rotates mobile user agents automatically
-
-## Known Limitations
-
-- Works only with public Instagram profiles
-- **Without login, Instagram only exposes the ~12 most recent posts** of a
-  profile — asking for a higher `limit` will not return more than what
-  Instagram serves anonymously
-- Limited to basic post information available on the profile page
-- Instagram may change their API responses at any time
-- Rate limiting may apply
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+Running scrapes in parallel against Instagram is the fastest way to get rate limited. Don't.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Disclaimer
-
-This tool is provided for educational purposes only. Make sure to read and comply with Instagram's terms of service and robots.txt file. The authors are not responsible for any misuse of this tool.
-
-## Support
-
-If you found this project helpful, please consider giving it a ⭐️!
+MIT. Use it responsibly and check Instagram's terms of service. This is for collecting public data, not for abuse.
