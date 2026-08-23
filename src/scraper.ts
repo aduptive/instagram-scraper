@@ -12,6 +12,7 @@ import type {
 export class InstagramScraper {
   private readonly axios: AxiosInstance;
   private readonly config: Required<ScraperConfig>;
+  private requestTimes: number[] = [];
 
   constructor(config: Partial<ScraperConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -51,123 +52,130 @@ export class InstagramScraper {
     return new Promise((resolve) => setTimeout(resolve, time));
   }
 
+  private extractMedia(item: any): MediaItem[] {
+    const mediaItems: MediaItem[] = [];
+    const video = item.video_versions?.[0];
+    const image = item.image_versions2?.candidates?.[0];
+
+    if (video) {
+      mediaItems.push({
+        url: video.url,
+        type: 'video',
+        width: video.width,
+        height: video.height,
+      });
+      if (image) {
+        mediaItems.push({
+          url: image.url,
+          type: 'thumbnail',
+          width: image.width,
+          height: image.height,
+        });
+      }
+    } else if (image) {
+      mediaItems.push({
+        url: image.url,
+        type: 'image',
+        width: image.width,
+        height: image.height,
+      });
+    }
+
+    return mediaItems;
+  }
+
+  private async throttle(): Promise<void> {
+    const windowMs = 60000;
+    const now = Date.now();
+    this.requestTimes = this.requestTimes.filter((t) => now - t < windowMs);
+
+    if (this.requestTimes.length >= this.config.rateLimitPerMinute) {
+      const waitMs = windowMs - (now - this.requestTimes[0]);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+
+    this.requestTimes.push(Date.now());
+  }
+
   private async fetchPostMedia(shortcode: string): Promise<MediaItem[]> {
     try {
+      await this.throttle();
       const response = await this.axios.get(
         `https://www.instagram.com/api/v1/media/${shortcode}/info/`
       );
 
-      const mediaItems: MediaItem[] = [];
-      const data = response.data;
+      const item = response.data?.items?.[0];
+      if (!item) return [];
 
-      if (data.items && data.items[0]) {
-        const item = data.items[0];
-
-        if (item.video_versions) {
-          mediaItems.push({
-            url: item.video_versions[0].url,
-            type: 'video',
-            width: item.video_versions[0].width,
-            height: item.video_versions[0].height,
-          });
-          if (item.image_versions2?.candidates) {
-            mediaItems.push({
-              url: item.image_versions2.candidates[0].url,
-              type: 'thumbnail',
-              width: item.image_versions2.candidates[0].width,
-              height: item.image_versions2.candidates[0].height,
-            });
-          }
-        } else if (item.carousel_media) {
-          for (const media of item.carousel_media) {
-            if (media.video_versions) {
-              mediaItems.push({
-                url: media.video_versions[0].url,
-                type: 'video',
-                width: media.video_versions[0].width,
-                height: media.video_versions[0].height,
-              });
-              if (media.image_versions2?.candidates) {
-                mediaItems.push({
-                  url: media.image_versions2.candidates[0].url,
-                  type: 'thumbnail',
-                  width: media.image_versions2.candidates[0].width,
-                  height: media.image_versions2.candidates[0].height,
-                });
-              }
-            } else if (media.image_versions2?.candidates) {
-              mediaItems.push({
-                url: media.image_versions2.candidates[0].url,
-                type: 'image',
-                width: media.image_versions2.candidates[0].width,
-                height: media.image_versions2.candidates[0].height,
-              });
-            }
-          }
-        } else if (item.image_versions2?.candidates) {
-          mediaItems.push({
-            url: item.image_versions2.candidates[0].url,
-            type: 'image',
-            width: item.image_versions2.candidates[0].width,
-            height: item.image_versions2.candidates[0].height,
-          });
+      if (!item.video_versions && item.carousel_media) {
+        const mediaItems: MediaItem[] = [];
+        for (const media of item.carousel_media) {
+          mediaItems.push(...this.extractMedia(media));
         }
+        return mediaItems;
       }
 
-      return mediaItems;
+      return this.extractMedia(item);
     } catch (error) {
       console.error('Error fetching media:', error);
       return [];
     }
   }
 
-  private async fetchFromApi(username: string): Promise<any> {
-    try {
-      const response = await this.axios.get(
-        `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-        {
-          headers: {
-            ...this.getRandomHeaders(),
-            'X-IG-App-ID': '936619743392459',
-          },
-        }
-      );
-
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        // Tratamento específico para cada tipo de erro
-        if (error.code === 'ECONNABORTED') {
-          return Promise.reject(ScrapeError.timeout());
-        }
-
-        if (!error.response) {
-          return Promise.reject(ScrapeError.networkError(error.message));
-        }
-
-        switch (error.response.status) {
-          case 429:
-            return Promise.reject(ScrapeError.rateLimited());
-          case 404:
-            return Promise.reject(ScrapeError.profileNotFound(username));
-          case 403:
-            return Promise.reject(ScrapeError.accessDenied());
-          default:
-            if (error.response.status >= 500) {
-              return Promise.reject(ScrapeError.serverError());
-            }
-            return Promise.reject(
-              ScrapeError.networkError(`HTTP Error ${error.response.status}`)
-            );
-        }
+  private toScrapeError(error: unknown, username: string): ScrapeError {
+    if (axios.isAxiosError(error)) {
+      if (error.code === 'ECONNABORTED') {
+        return ScrapeError.timeout();
       }
 
-      // Se não for um erro do axios
-      return Promise.reject(
-        error instanceof Error
-          ? ScrapeError.networkError(error.message)
-          : ScrapeError.networkError('Unknown error')
-      );
+      if (!error.response) {
+        return ScrapeError.networkError(error.message);
+      }
+
+      switch (error.response.status) {
+        case 429:
+          return ScrapeError.rateLimited();
+        case 404:
+          return ScrapeError.profileNotFound(username);
+        case 403:
+          return ScrapeError.accessDenied();
+        default:
+          if (error.response.status >= 500) {
+            return ScrapeError.serverError();
+          }
+          return ScrapeError.networkError(
+            `HTTP Error ${error.response.status}`
+          );
+      }
+    }
+
+    return error instanceof Error
+      ? ScrapeError.networkError(error.message)
+      : ScrapeError.networkError('Unknown error');
+  }
+
+  private async fetchFromApi(username: string): Promise<any> {
+    const RETRIABLE = ['NETWORK_ERROR', 'TIMEOUT', 'SERVER_ERROR'];
+
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.throttle();
+        const response = await this.axios.get(
+          `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
+          { headers: this.getRandomHeaders() }
+        );
+
+        return response.data;
+      } catch (error) {
+        const scrapeError = this.toScrapeError(error, username);
+        if (
+          attempt >= this.config.maxRetries ||
+          !RETRIABLE.includes(scrapeError.code ?? '')
+        ) {
+          throw scrapeError;
+        }
+        await this.delay();
+      }
     }
   }
 

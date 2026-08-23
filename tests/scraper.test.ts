@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { InstagramScraper } from '../src';
 
 jest.mock('axios');
@@ -95,7 +97,7 @@ describe('InstagramScraper', () => {
   it('should handle network error', async () => {
     const networkError = new Error('Network Error');
     (networkError as any).isAxiosError = true;
-    mockedAxios.get.mockRejectedValueOnce(networkError);
+    mockedAxios.get.mockRejectedValue(networkError);
 
     const result = await scraper.getPosts('testuser');
     expect(result.success).toBe(false);
@@ -124,7 +126,10 @@ describe('InstagramScraper', () => {
       scraped_at: new Date().toISOString(),
     };
 
-    const result = await scraper.saveToJson(mockData, 'test.json');
+    const result = await scraper.saveToJson(
+      mockData,
+      join(tmpdir(), 'instagram-scraper-test.json')
+    );
     expect(result).toBe(true);
   });
 });

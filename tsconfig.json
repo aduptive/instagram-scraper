@@ -13,6 +13,6 @@
     "sourceMap": true,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*", "type/types.d.ts", "test/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

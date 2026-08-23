@@ -5,4 +5,4 @@ export { InstagramScraper } from './scraper';
 export type { InstagramPost, ScraperConfig, ScraperResponse } from './types';
 
 export default InstagramScraper;
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.4';

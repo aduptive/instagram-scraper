@@ -118,6 +118,21 @@ interface ScraperConfig {
 }
 ```
 
+### Retries
+
+Failed requests are retried up to `maxRetries` times (with a random delay between
+attempts) for transient errors only: network errors, timeouts, and Instagram 5xx
+responses. Errors like `429 Too Many Requests`, `404 Not Found`, and
+`403 Forbidden` are **not** retried — retrying those would only make rate
+limiting worse.
+
+### Rate limiting
+
+The scraper keeps a sliding one-minute window of all outgoing requests (profile
+and media requests alike). When `rateLimitPerMinute` is reached, the next request
+waits until the window frees up. This is in addition to the random
+`minDelay`/`maxDelay` pause between requests.
+
 ## Best Practices
 
 1. **Rate Limiting**: The tool implements built-in delays, but you should still be mindful of Instagram's rate limits
@@ -128,8 +143,11 @@ interface ScraperConfig {
 ## Known Limitations
 
 - Works only with public Instagram profiles
+- **Without login, Instagram only exposes the ~12 most recent posts** of a
+  profile — asking for a higher `limit` will not return more than what
+  Instagram serves anonymously
 - Limited to basic post information available on the profile page
-- Instagram may change their HTML structure at any time
+- Instagram may change their API responses at any time
 - Rate limiting may apply
 
 ## Contributing
