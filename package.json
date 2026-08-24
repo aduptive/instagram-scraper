@@ -1,7 +1,7 @@
 {
   "name": "@aduptive/instagram-scraper",
   "version": "1.0.4",
-  "description": "Modern TypeScript library for collecting public Instagram content with smart delays, mobile-first approach, and media support",
+  "description": "Zero-dependency TypeScript library for scraping public Instagram profiles, posts and media without login, with built-in retries and rate limiting",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -10,7 +10,6 @@
     "README.md"
   ],
   "scripts": {
-    "debug": "ts-node debug.ts",
     "build": "tsc",
     "clean": "rimraf dist",
     "test": "jest",
@@ -47,9 +46,6 @@
     "url": "https://github.com/aduptive/instagram-scraper/issues"
   },
   "homepage": "https://github.com/aduptive/instagram-scraper#readme",
-  "dependencies": {
-    "axios": "^1.6.7"
-  },
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/node": "^20.11.0",
@@ -63,7 +59,7 @@
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   },
   "publishConfig": {
     "access": "public"
