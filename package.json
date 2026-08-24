@@ -1,6 +1,6 @@
 {
   "name": "@aduptive/instagram-scraper",
-  "version": "1.0.4",
+  "version": "2.0.0",
   "description": "Zero-dependency TypeScript library for scraping public Instagram profiles, posts and media without login, with built-in retries and rate limiting",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

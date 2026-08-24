@@ -72,7 +72,10 @@ export class InstagramScraper {
     this.requestTimes.push(Date.now());
   }
 
-  private statusToError(status: number, notFound: () => ScrapeError): ScrapeError {
+  private statusToError(
+    status: number,
+    notFound: () => ScrapeError
+  ): ScrapeError {
     switch (status) {
       case 429:
         return ScrapeError.rateLimited();
@@ -140,7 +143,10 @@ export class InstagramScraper {
         return await this.request(url, signal, notFound);
       } catch (error) {
         const code = error instanceof ScrapeError ? error.code : undefined;
-        if (attempt >= this.config.maxRetries || !RETRIABLE.includes(code ?? '')) {
+        if (
+          attempt >= this.config.maxRetries ||
+          !RETRIABLE.includes(code ?? '')
+        ) {
           throw error;
         }
         await this.delay();
@@ -198,7 +204,8 @@ export class InstagramScraper {
     const data = await this.requestWithRetry(
       `https://www.instagram.com/api/v1/media/${shortcode}/info/`,
       signal,
-      () => new ScrapeError(`Post '${shortcode}' not found`, 'POST_NOT_FOUND', 404)
+      () =>
+        new ScrapeError(`Post '${shortcode}' not found`, 'POST_NOT_FOUND', 404)
     );
     return data?.items?.[0] ?? null;
   }
@@ -254,7 +261,10 @@ export class InstagramScraper {
   ): Promise<InstagramPost> {
     let mediaItems: MediaItem[] = [];
     try {
-      const item = await this.fetchPostItem(post.code || post.shortcode, signal);
+      const item = await this.fetchPostItem(
+        post.code || post.shortcode,
+        signal
+      );
       if (item) {
         mediaItems = this.extractItemMedia(item);
       }
