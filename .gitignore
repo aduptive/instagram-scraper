@@ -141,5 +141,4 @@ coverage/
 
 // .npmignore
 coverage/
-.github/
 package-lock.json
