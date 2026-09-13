@@ -26,10 +26,14 @@ const SHORTCODE_ALPHABET =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
 // The /api/v1/media/{id}/info/ endpoint takes the numeric media id, not the
-// shortcode. A shortcode is that id in base64url (first 11 chars).
+// shortcode. A shortcode is that id in base64url (at most 11 chars — anything
+// longer is not a media shortcode, so don't silently truncate it).
 function shortcodeToMediaId(shortcode: string): string | null {
+  if (shortcode.length > 11) {
+    return null;
+  }
   let id = 0n;
-  for (const char of shortcode.slice(0, 11)) {
+  for (const char of shortcode) {
     const index = SHORTCODE_ALPHABET.indexOf(char);
     if (index === -1) return null;
     id = id * 64n + BigInt(index);
@@ -50,10 +54,15 @@ export class InstagramScraper {
     const { maxRetries, minDelay, maxDelay, timeout, rateLimitPerMinute } =
       this.config;
     if (
+      !Number.isInteger(maxRetries) ||
       maxRetries < 1 ||
+      !Number.isFinite(minDelay) ||
       minDelay < 0 ||
+      !Number.isFinite(maxDelay) ||
       maxDelay < minDelay ||
+      !Number.isFinite(timeout) ||
       timeout <= 0 ||
+      !Number.isInteger(rateLimitPerMinute) ||
       rateLimitPerMinute < 1
     ) {
       throw ScrapeError.invalidConfig(
@@ -159,10 +168,14 @@ export class InstagramScraper {
 
       try {
         return await response.json();
-      } catch {
-        // 200 with a non-JSON body (HTML page, login wall, format change) is
-        // a parse problem, not a network problem — and not worth retrying.
-        throw ScrapeError.parseError();
+      } catch (error) {
+        // Only a syntax error is a parse problem (HTML page, login wall,
+        // format change) — not worth retrying. Aborts, timeouts and broken
+        // streams during body reading keep their own classification below.
+        if (error instanceof SyntaxError) {
+          throw ScrapeError.parseError();
+        }
+        throw error;
       }
     } catch (error) {
       if (error instanceof ScrapeError) {
@@ -304,25 +317,27 @@ export class InstagramScraper {
     // Enrichment failed or was skipped: fall back to the media the profile
     // feed response already carries.
     if (mediaItems.length === 0) {
+      // 'video' only when there is an actual video URL — a video post whose
+      // feed data carries just display_url gets its cover as a thumbnail,
+      // never a fake video_url.
+      const feedItem = (node: any): MediaItem => ({
+        url: node.video_url || node.display_url,
+        type: node.video_url
+          ? ('video' as const)
+          : node.is_video
+            ? ('thumbnail' as const)
+            : ('image' as const),
+        width: node.dimensions?.width,
+        height: node.dimensions?.height,
+      });
+
       if (sidecarChildren?.length) {
         mediaItems = sidecarChildren
           .map((edge: any) => edge.node)
           .filter((node: any) => node?.display_url || node?.video_url)
-          .map((node: any) => ({
-            url: node.video_url || node.display_url,
-            type: node.is_video ? ('video' as const) : ('image' as const),
-            width: node.dimensions?.width,
-            height: node.dimensions?.height,
-          }));
+          .map(feedItem);
       } else if (post.video_url || post.display_url) {
-        mediaItems = [
-          {
-            url: post.video_url || post.display_url,
-            type: post.is_video ? 'video' : 'image',
-            width: post.dimensions?.width,
-            height: post.dimensions?.height,
-          },
-        ];
+        mediaItems = [feedItem(post)];
       }
     }
 

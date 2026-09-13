@@ -277,6 +277,102 @@ describe('InstagramScraper', () => {
     expect(() => new InstagramScraper({ timeout: undefined })).not.toThrow();
   });
 
+  it('should convert the shortcode to the exact numeric media id', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(mediaData));
+    await scraper.getPost('ABC123');
+    // independently verified: base64url('ABC123') === 17522103
+    expect(mockFetch.mock.calls[0][0]).toContain('/media/17522103/info/');
+  });
+
+  it('should report ABORTED when cancelled while reading a response body', async () => {
+    const controller = new AbortController();
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).includes('/media/')) {
+        controller.abort();
+        return {
+          ok: true,
+          status: 200,
+          json: async () => {
+            const error = new Error('This operation was aborted');
+            error.name = 'AbortError';
+            throw error;
+          },
+        };
+      }
+      return jsonResponse(profileData);
+    });
+
+    const result = await scraper.getPosts('testuser', 20, {
+      signal: controller.signal,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('ABORTED');
+  });
+
+  it('should not fabricate video_url from a cover image', async () => {
+    const videoProfile = JSON.parse(JSON.stringify(profileData));
+    videoProfile.data.user.edge_owner_to_timeline_media.edges[0].node.is_video =
+      true;
+
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(videoProfile))
+      .mockResolvedValue(jsonResponse({}, 500));
+
+    const result = await scraper.getPosts('testuser');
+
+    expect(result.success).toBe(true);
+    const post = result.posts?.[0];
+    expect(post?.media_type).toBe('video');
+    expect(post?.video_url).toBeUndefined();
+    expect(post?.thumbnail_url).toBe('https://example.com/image.jpg');
+  });
+
+  it('should reject NaN, Infinity and fractional config values', () => {
+    expect(() => new InstagramScraper({ maxRetries: NaN })).toThrow();
+    expect(() => new InstagramScraper({ maxRetries: Infinity })).toThrow();
+    expect(() => new InstagramScraper({ maxRetries: 1.5 })).toThrow();
+    expect(() => new InstagramScraper({ timeout: NaN })).toThrow();
+    expect(() => new InstagramScraper({ rateLimitPerMinute: NaN })).toThrow();
+  });
+
+  it('should serialize concurrent callers through the rate limit', async () => {
+    jest.useFakeTimers();
+    try {
+      const limited = new InstagramScraper({
+        minDelay: 0,
+        maxDelay: 0,
+        rateLimitPerMinute: 1,
+      });
+      const released: number[] = [];
+      const throttle = () =>
+        (limited as any).throttle().then(() => released.push(Date.now()));
+
+      await throttle();
+      const pending = [throttle(), throttle()];
+      await jest.advanceTimersByTimeAsync(180000);
+      await Promise.all(pending);
+
+      expect(released).toHaveLength(3);
+      // one caller per window, not all released together
+      expect(released[1] - released[0]).toBeGreaterThanOrEqual(60000);
+      expect(released[2] - released[1]).toBeGreaterThanOrEqual(60000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('should not query a truncated id for an overlong shortcode', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({}, 404));
+
+    const result = await scraper.getPost('BAcyDyQwc8Bgarbage');
+
+    expect(result.success).toBe(false);
+    // no base64url conversion happened: the raw string was used as-is, once
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toContain('/media/BAcyDyQwc8Bgarbage/');
+  });
+
   it('should save to JSON', async () => {
     const mockData = {
       success: true,
