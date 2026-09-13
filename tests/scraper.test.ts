@@ -158,7 +158,8 @@ describe('InstagramScraper', () => {
       caption: 'Test caption',
       likes: 100,
     });
-    expect(mockFetch.mock.calls[0][0]).toContain('/media/ABC123/info/');
+    // ABC123 converted from shortcode (base64url) to the numeric media id
+    expect(mockFetch.mock.calls[0][0]).toMatch(/\/media\/\d+\/info\//);
   });
 
   it('should reject an invalid post URL', async () => {
@@ -185,6 +186,95 @@ describe('InstagramScraper', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('not found');
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('should not fetch at all with a pre-aborted signal', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const profile = await scraper.getProfile('testuser', {
+      signal: controller.signal,
+    });
+    const post = await scraper.getPost('ABC123', {
+      signal: controller.signal,
+    });
+
+    expect(profile.success).toBe(false);
+    expect(profile.code).toBe('ABORTED');
+    expect(post.success).toBe(false);
+    expect(post.code).toBe('ABORTED');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('should stop the collection when media enrichment hits a 429', async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(profileData))
+      .mockResolvedValue(jsonResponse({}, 429));
+
+    const result = await scraper.getPosts('testuser');
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('RATE_LIMITED');
+    // profile + one media attempt; the block is reported, not hidden
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('should classify carousels from structural fields when enrichment fails', async () => {
+    const sidecarProfile = JSON.parse(JSON.stringify(profileData));
+    const node =
+      sidecarProfile.data.user.edge_owner_to_timeline_media.edges[0].node;
+    node.__typename = 'GraphSidecar';
+    node.edge_sidecar_to_children = {
+      edges: [
+        { node: { display_url: 'https://example.com/a.jpg' } },
+        { node: { display_url: 'https://example.com/b.jpg' } },
+      ],
+    };
+
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(sidecarProfile))
+      .mockResolvedValue(jsonResponse({}, 500));
+
+    const result = await scraper.getPosts('testuser');
+
+    expect(result.success).toBe(true);
+    expect(result.posts?.[0].media_type).toBe('carousel');
+    expect(result.posts?.[0].media_items).toHaveLength(2);
+  });
+
+  it('should report invalid JSON as PARSE_ERROR without retrying', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token <');
+      },
+    });
+
+    const result = await scraper.getProfile('testuser');
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('PARSE_ERROR');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reject a non-positive limit', async () => {
+    const result = await scraper.getPosts('testuser', -1);
+    expect(result.success).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('should reject an invalid config', () => {
+    expect(() => new InstagramScraper({ rateLimitPerMinute: 0 })).toThrow(
+      'Invalid configuration'
+    );
+    expect(() => new InstagramScraper({ minDelay: 500, maxDelay: 100 })).toThrow(
+      'Invalid configuration'
+    );
+  });
+
+  it('should ignore explicitly undefined config values', () => {
+    expect(() => new InstagramScraper({ timeout: undefined })).not.toThrow();
   });
 
   it('should save to JSON', async () => {

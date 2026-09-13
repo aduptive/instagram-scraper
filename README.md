@@ -86,7 +86,8 @@ const scraper = new InstagramScraper({
 
 Notes on how these behave:
 
-- Retries only happen for transient errors (network, timeout, Instagram 5xx). A 429, 404 or 403 fails immediately, since retrying those just digs the hole deeper.
+- `maxRetries` is the number of total attempts, and only transient errors (network, timeout, Instagram 5xx) are retried. A 429, 404 or 403 fails immediately, since retrying those just digs the hole deeper. A 200 with a non-JSON body (login wall, HTML error page) fails immediately too, as `PARSE_ERROR`.
+- Getting rate limited (429) or blocked (403) mid-collection stops the run: `getPosts` returns `success: false` with the reason and whatever posts were collected so far. It never keeps hammering a blocked IP.
 - The rate limit is a sliding one-minute window over every request the scraper makes (profile + media), on top of the random min/max delay.
 
 ## Error handling
@@ -124,6 +125,21 @@ for (const username of ['nasa', 'natgeo']) {
 ```
 
 Running scrapes in parallel against Instagram is the fastest way to get rate limited. Don't.
+
+## Changed in 2.1
+
+- Media details are now fetched with the post's numeric media id (the correct
+  identifier for that endpoint), with a one-time shortcode fallback.
+- A 429/403 during media enrichment now stops the run and reports it, instead
+  of silently returning media-less posts as success.
+- Carousels are classified from the post's structural fields, and when the
+  media-info call fails the media already present in the profile response is
+  used as a fallback.
+- An already-aborted `AbortSignal` is respected before any request is made.
+- Invalid JSON responses report `PARSE_ERROR` (no retry) instead of
+  `NETWORK_ERROR` with retries.
+- The constructor validates its config (`INVALID_CONFIG` error on nonsense
+  like `rateLimitPerMinute: 0`), and `getPosts` rejects a non-positive limit.
 
 ## Migrating from 1.x
 

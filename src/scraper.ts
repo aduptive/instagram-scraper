@@ -22,12 +22,44 @@ function extractShortcode(input: string): string | null {
   return /^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : null;
 }
 
+const SHORTCODE_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+// The /api/v1/media/{id}/info/ endpoint takes the numeric media id, not the
+// shortcode. A shortcode is that id in base64url (first 11 chars).
+function shortcodeToMediaId(shortcode: string): string | null {
+  let id = 0n;
+  for (const char of shortcode.slice(0, 11)) {
+    const index = SHORTCODE_ALPHABET.indexOf(char);
+    if (index === -1) return null;
+    id = id * 64n + BigInt(index);
+  }
+  return id.toString();
+}
+
 export class InstagramScraper {
   private readonly config: Required<ScraperConfig>;
   private requestTimes: number[] = [];
 
   constructor(config: Partial<ScraperConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    const cleaned = Object.fromEntries(
+      Object.entries(config).filter(([, value]) => value !== undefined)
+    ) as Partial<ScraperConfig>;
+    this.config = { ...DEFAULT_CONFIG, ...cleaned };
+
+    const { maxRetries, minDelay, maxDelay, timeout, rateLimitPerMinute } =
+      this.config;
+    if (
+      maxRetries < 1 ||
+      minDelay < 0 ||
+      maxDelay < minDelay ||
+      timeout <= 0 ||
+      rateLimitPerMinute < 1
+    ) {
+      throw ScrapeError.invalidConfig(
+        'expected maxRetries >= 1, 0 <= minDelay <= maxDelay, timeout > 0, rateLimitPerMinute >= 1'
+      );
+    }
   }
 
   private getRandomHeaders(): Record<string, string> {
@@ -61,10 +93,14 @@ export class InstagramScraper {
 
   private async throttle(): Promise<void> {
     const windowMs = 60000;
-    const now = Date.now();
-    this.requestTimes = this.requestTimes.filter((t) => now - t < windowMs);
-
-    if (this.requestTimes.length >= this.config.rateLimitPerMinute) {
+    // Loop instead of a single wait: concurrent callers waking up together
+    // must re-check the window or they all slip in at once.
+    for (;;) {
+      const now = Date.now();
+      this.requestTimes = this.requestTimes.filter((t) => now - t < windowMs);
+      if (this.requestTimes.length < this.config.rateLimitPerMinute) {
+        break;
+      }
       const waitMs = windowMs - (now - this.requestTimes[0]);
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
@@ -96,7 +132,15 @@ export class InstagramScraper {
     signal: AbortSignal | undefined,
     notFound: () => ScrapeError
   ): Promise<any> {
+    // An already-aborted signal never fires its 'abort' listener, so check
+    // explicitly both before and after the throttle wait.
+    if (signal?.aborted) {
+      throw new ScrapeError('Request aborted', 'ABORTED');
+    }
     await this.throttle();
+    if (signal?.aborted) {
+      throw new ScrapeError('Request aborted', 'ABORTED');
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeout);
@@ -113,7 +157,13 @@ export class InstagramScraper {
         throw this.statusToError(response.status, notFound);
       }
 
-      return await response.json();
+      try {
+        return await response.json();
+      } catch {
+        // 200 with a non-JSON body (HTML page, login wall, format change) is
+        // a parse problem, not a network problem — and not worth retrying.
+        throw ScrapeError.parseError();
+      }
     } catch (error) {
       if (error instanceof ScrapeError) {
         throw error;
@@ -198,26 +248,81 @@ export class InstagramScraper {
   }
 
   private async fetchPostItem(
-    shortcode: string,
+    mediaId: string,
     signal?: AbortSignal
   ): Promise<any> {
     const data = await this.requestWithRetry(
-      `https://www.instagram.com/api/v1/media/${shortcode}/info/`,
+      `https://www.instagram.com/api/v1/media/${mediaId}/info/`,
       signal,
-      () =>
-        new ScrapeError(`Post '${shortcode}' not found`, 'POST_NOT_FOUND', 404)
+      () => new ScrapeError(`Post '${mediaId}' not found`, 'POST_NOT_FOUND', 404)
     );
     return data?.items?.[0] ?? null;
   }
 
+  // ponytail: try the numeric media id first (what the endpoint documents),
+  // fall back to the shortcode once — drop the fallback after a live check
+  // confirms which identifier Instagram actually accepts here.
+  private async fetchPostItemWithFallback(
+    mediaId: string,
+    fallback: string | null,
+    signal?: AbortSignal
+  ): Promise<any> {
+    try {
+      return await this.fetchPostItem(mediaId, signal);
+    } catch (error) {
+      if (
+        fallback &&
+        fallback !== mediaId &&
+        ScrapeError.isScrapeError(error) &&
+        error.code === 'POST_NOT_FOUND'
+      ) {
+        return this.fetchPostItem(fallback, signal);
+      }
+      throw error;
+    }
+  }
+
   private buildPost(post: any, mediaItems: MediaItem[]): InstagramPost {
     const shortcode = post.code || post.shortcode;
+    const sidecarChildren = post.edge_sidecar_to_children?.edges;
 
+    // Classify from the post's structural fields, not from how many media
+    // items enrichment happened to return.
     let mediaType: 'image' | 'video' | 'carousel' = 'image';
     if (post.is_video || post.video_versions) {
       mediaType = 'video';
-    } else if (mediaItems.length > 1) {
+    } else if (
+      post.__typename === 'GraphSidecar' ||
+      sidecarChildren?.length ||
+      post.carousel_media ||
+      mediaItems.length > 1
+    ) {
       mediaType = 'carousel';
+    }
+
+    // Enrichment failed or was skipped: fall back to the media the profile
+    // feed response already carries.
+    if (mediaItems.length === 0) {
+      if (sidecarChildren?.length) {
+        mediaItems = sidecarChildren
+          .map((edge: any) => edge.node)
+          .filter((node: any) => node?.display_url || node?.video_url)
+          .map((node: any) => ({
+            url: node.video_url || node.display_url,
+            type: node.is_video ? ('video' as const) : ('image' as const),
+            width: node.dimensions?.width,
+            height: node.dimensions?.height,
+          }));
+      } else if (post.video_url || post.display_url) {
+        mediaItems = [
+          {
+            url: post.video_url || post.display_url,
+            type: post.is_video ? 'video' : 'image',
+            width: post.dimensions?.width,
+            height: post.dimensions?.height,
+          },
+        ];
+      }
     }
 
     const processedPost: InstagramPost = {
@@ -261,18 +366,24 @@ export class InstagramScraper {
   ): Promise<InstagramPost> {
     let mediaItems: MediaItem[] = [];
     try {
-      const item = await this.fetchPostItem(
-        post.code || post.shortcode,
+      const item = await this.fetchPostItemWithFallback(
+        post.id || post.code || post.shortcode,
+        post.code || post.shortcode || null,
         signal
       );
       if (item) {
         mediaItems = this.extractItemMedia(item);
       }
     } catch (error) {
-      if (ScrapeError.isScrapeError(error) && error.code === 'ABORTED') {
+      if (
+        ScrapeError.isScrapeError(error) &&
+        ['ABORTED', 'RATE_LIMITED', 'ACCESS_DENIED'].includes(error.code ?? '')
+      ) {
+        // Being blocked mid-run must stop the collection, not be hidden.
         throw error;
       }
-      // Media enrichment is best-effort: the post is still useful without it.
+      // Other enrichment failures are best-effort: the post is still useful
+      // without extra media (buildPost falls back to the feed's own media).
     }
     return this.buildPost(post, mediaItems);
   }
@@ -298,7 +409,7 @@ export class InstagramScraper {
     signal?: AbortSignal
   ): Promise<any> {
     const data = await this.requestWithRetry(
-      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
+      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
       signal,
       () => ScrapeError.profileNotFound(username)
     );
@@ -359,7 +470,11 @@ export class InstagramScraper {
       }
 
       await this.delay();
-      const item = await this.fetchPostItem(shortcode, options.signal);
+      const item = await this.fetchPostItemWithFallback(
+        shortcodeToMediaId(shortcode) ?? shortcode,
+        shortcode,
+        options.signal
+      );
       if (!item) {
         throw new ScrapeError(
           `Post '${shortcode}' not found`,
@@ -388,6 +503,9 @@ export class InstagramScraper {
     try {
       if (!username) {
         return { success: false, error: 'Username is required' };
+      }
+      if (!Number.isFinite(limit) || limit < 1) {
+        return { success: false, error: 'limit must be a positive number' };
       }
 
       await this.delay();
