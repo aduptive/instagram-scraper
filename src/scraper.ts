@@ -254,7 +254,8 @@ export class InstagramScraper {
     const data = await this.requestWithRetry(
       `https://www.instagram.com/api/v1/media/${mediaId}/info/`,
       signal,
-      () => new ScrapeError(`Post '${mediaId}' not found`, 'POST_NOT_FOUND', 404)
+      () =>
+        new ScrapeError(`Post '${mediaId}' not found`, 'POST_NOT_FOUND', 404)
     );
     return data?.items?.[0] ?? null;
   }
