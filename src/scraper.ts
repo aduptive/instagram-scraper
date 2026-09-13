@@ -520,8 +520,8 @@ export class InstagramScraper {
       if (!username) {
         return { success: false, error: 'Username is required' };
       }
-      if (!Number.isFinite(limit) || limit < 1) {
-        return { success: false, error: 'limit must be a positive number' };
+      if (!Number.isInteger(limit) || limit < 1) {
+        return { success: false, error: 'limit must be a positive integer' };
       }
 
       await this.delay();
@@ -545,6 +545,11 @@ export class InstagramScraper {
           total: selected.length,
           currentPost: processedPost,
         });
+      }
+
+      // A caller aborting inside the last onProgress still gets ABORTED.
+      if (options.signal?.aborted) {
+        throw new ScrapeError('Request aborted', 'ABORTED');
       }
 
       return {

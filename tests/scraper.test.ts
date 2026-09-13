@@ -258,10 +258,62 @@ describe('InstagramScraper', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('should reject a non-positive limit', async () => {
-    const result = await scraper.getPosts('testuser', -1);
-    expect(result.success).toBe(false);
+  it('should reject a non-positive or fractional limit', async () => {
+    for (const limit of [-1, 0, 1.5, NaN]) {
+      const result = await scraper.getPosts('testuser', limit);
+      expect(result.success).toBe(false);
+    }
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('should report ABORTED when cancelled inside the last onProgress', async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(profileData))
+      .mockResolvedValue(jsonResponse(mediaData));
+
+    const controller = new AbortController();
+    const result = await scraper.getPosts('testuser', 20, {
+      signal: controller.signal,
+      onProgress: () => controller.abort(),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('ABORTED');
+    expect(result.posts).toHaveLength(1);
+  });
+
+  it('should classify a timeout during body reading as TIMEOUT and retry', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      },
+    });
+
+    const result = await scraper.getProfile('testuser');
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('TIMEOUT');
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('should classify a broken stream as NETWORK_ERROR and retry', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new TypeError('terminated');
+      },
+    });
+
+    const result = await scraper.getProfile('testuser');
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('NETWORK_ERROR');
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
   it('should reject an invalid config', () => {
